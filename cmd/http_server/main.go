@@ -70,27 +70,33 @@ func main() {
 		defer stmt.Close()
 
 		quantity := r.FormValue("quantity")
-		_, err = stmt.Exec(
+		result, err := stmt.Exec(
 			r.FormValue("customerName"),
 			r.FormValue("productName"),
 			quantity,
 			r.FormValue("shippingAddress"),
 			r.FormValue("priority"),
 		)
-
-		log.Printf(
-			"Inserted order with quantity: %s, customer name: %s, product name: %s, shipping address: %s, priority: %s",
-			quantity,
-			r.FormValue("customerName"),
-			r.FormValue("productName"),
-			r.FormValue("shippingAddress"),
-			r.FormValue("priority"),
-		)
-
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		lastID, err := result.LastInsertId()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf(
+			"Inserted order #%d with quantity: %s, customer name: %s, product name: %s, shipping address: %s, priority: %s",
+			lastID,
+			quantity,
+			r.FormValue("customerName"),
+			r.FormValue("productName"),
+			r.FormValue("shippingAddress"),
+			r.FormValue("priority"),
+		)
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
