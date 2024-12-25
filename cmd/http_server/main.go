@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -17,13 +16,7 @@ type Order struct {
 	Priority        string
 }
 
-func main() {
-	db, err := sql.Open("sqlite3", "./orders.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
+func initDB(db *sql.DB) error {
 	createTable := `
     CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +28,47 @@ func main() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );`
 
-	_, err = db.Exec(createTable)
+	_, err := db.Exec(createTable)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS priority_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            priority TEXT NOT NULL,
+            processed BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(order_id) REFERENCES orders(id)
+        )`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS polling_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_processed_id INTEGER NOT NULL DEFAULT 0
+        )`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+        INSERT OR IGNORE INTO polling_state (id, last_processed_id) 
+        VALUES (1, 0)`)
+	return err
+}
+
+func main() {
+	db, err := sql.Open("sqlite3", "./orders.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	err = initDB(db)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -117,9 +150,16 @@ func main() {
 			}
 
 			orderID := r.FormValue("id")
-			fmt.Printf("r: %+v\n", orderID)
-			stmt, err := db.Prepare(`
-				UPDATE orders
+
+			tx, err := db.Begin()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer tx.Rollback()
+
+			updateStmt, err := tx.Prepare(`
+				UPDATE orders 
 				SET priority = 'high'
 				WHERE id = ?
 			`)
@@ -127,15 +167,40 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			defer stmt.Close()
+			defer updateStmt.Close()
 
-			_, err = stmt.Exec(orderID)
+			_, err = updateStmt.Exec(orderID)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
-			log.Printf("Updated order #%s priority to high", orderID)
+			insertStmt, err := tx.Prepare(`
+				INSERT INTO priority_changes (order_id, priority)
+				VALUES (?, 'high')
+			`)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer insertStmt.Close()
+
+			_, err = insertStmt.Exec(orderID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			err = tx.Commit()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf(
+				"Updated order #%s priority to high and logged change",
+				orderID,
+			)
 			w.WriteHeader(http.StatusOK)
 		},
 	)
