@@ -62,6 +62,7 @@ func initDB(db *sql.DB) error {
 	return err
 }
 
+// only ninja product will be affected
 func pollForPriorityChanges(db *sql.DB) {
 	for {
 		tx, err := db.Begin()
@@ -83,10 +84,14 @@ func pollForPriorityChanges(db *sql.DB) {
 		}
 
 		rows, err := tx.Query(`
-            SELECT id, order_id, priority 
-            FROM priority_changes 
-            WHERE id > ? AND processed = FALSE
-            ORDER BY id ASC`, lastID)
+			SELECT pc.id, pc.order_id, pc.priority 
+			FROM priority_changes pc
+			JOIN orders o ON pc.order_id = o.id 
+			WHERE o.product_name = 'ninja'
+			AND pc.id > ? 
+			AND pc.processed = FALSE
+			ORDER BY pc.id ASC`,
+			lastID)
 		if err != nil {
 			log.Printf("Polling error: %v", err)
 			time.Sleep(5 * time.Second)
@@ -113,9 +118,8 @@ func pollForPriorityChanges(db *sql.DB) {
 
 			maxID = id
 			log.Printf(
-				"Processed priority change for order #%d to %s",
+				"Polling worker processed priority change for ninja order #%d",
 				orderID,
-				priority,
 			)
 		}
 		rows.Close()
