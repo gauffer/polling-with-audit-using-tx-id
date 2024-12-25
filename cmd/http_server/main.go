@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -61,6 +62,82 @@ func initDB(db *sql.DB) error {
 	return err
 }
 
+func pollForPriorityChanges(db *sql.DB) {
+	for {
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("Error starting transaction: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		defer tx.Rollback()
+
+		var lastID int64
+		err = tx.QueryRow(`
+            SELECT last_processed_id FROM polling_state WHERE id = 1
+        `).Scan(&lastID)
+		if err != nil {
+			log.Printf("Error getting last processed ID: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		rows, err := tx.Query(`
+            SELECT id, order_id, priority 
+            FROM priority_changes 
+            WHERE id > ? AND processed = FALSE
+            ORDER BY id ASC`, lastID)
+		if err != nil {
+			log.Printf("Polling error: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		var maxID int64
+		for rows.Next() {
+			var id, orderID int64
+			var priority string
+			err := rows.Scan(&id, &orderID, &priority)
+			if err != nil {
+				log.Printf("Scan error: %v", err)
+				continue
+			}
+
+			_, err = tx.Exec(`
+                UPDATE priority_changes SET processed = TRUE WHERE id = ?
+            `, id)
+			if err != nil {
+				log.Printf("Error marking change as processed: %v", err)
+				continue
+			}
+
+			maxID = id
+			log.Printf(
+				"Processed priority change for order #%d to %s",
+				orderID,
+				priority,
+			)
+		}
+		rows.Close()
+
+		if maxID > lastID {
+			_, err = tx.Exec(`
+                UPDATE polling_state SET last_processed_id = ? WHERE id = 1
+            `, maxID)
+			if err != nil {
+				log.Printf("Error updating last processed ID: %v", err)
+			}
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			log.Printf("Error committing transaction: %v", err)
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+}
+
 func main() {
 	db, err := sql.Open("sqlite3", "./orders.db")
 	if err != nil {
@@ -72,6 +149,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	go pollForPriorityChanges(db)
 
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/", fs)
