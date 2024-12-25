@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -100,6 +101,44 @@ func main() {
 
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
+
+	http.HandleFunc(
+		"/orders/priority",
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPatch {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			err := r.ParseForm()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			orderID := r.FormValue("id")
+			fmt.Printf("r: %+v\n", orderID)
+			stmt, err := db.Prepare(`
+				UPDATE orders
+				SET priority = 'high'
+				WHERE id = ?
+			`)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer stmt.Close()
+
+			_, err = stmt.Exec(orderID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("Updated order #%s priority to high", orderID)
+			w.WriteHeader(http.StatusOK)
+		},
+	)
 
 	log.Println("Server starting on :8080...")
 	log.Fatal(http.ListenAndServe(":8080", nil))

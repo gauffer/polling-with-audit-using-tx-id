@@ -32,6 +32,44 @@
         </div>
         <button type="submit">Create Order</button>
     </form>
+
+    <h2>Update Priority</h2>
+    <form action="/orders/priority" method="POST" onsubmit="submitPatch(event)">
+        <div>
+            <label for="orderId">Order ID:</label>
+            <input type="number" id="orderId" name="id" required>
+        </div>
+        <button type="submit">Set High Priority</button>
+    </form>
+
+    <script>
+    function submitPatch(event) {
+        event.preventDefault();
+        const form = event.target;
+        const formData = new FormData(form);
+        const data = new URLSearchParams();
+        for (const pair of formData) {
+            data.append(pair[0], pair[1]);
+        }
+
+        console.log('Sending data:', data.toString());
+        fetch(form.action, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: data.toString()
+        }).then(response => {
+            if (response.ok) {
+                alert('Priority updated successfully');
+                form.reset();
+            } else {
+                alert('Error updating priority');
+            }
+        });
+    }
+    </script>
+
 </body>
 </html>
 
